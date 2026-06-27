@@ -16,7 +16,7 @@ import time
 # ======== CONFIG ========
 BOT_TOKEN = "8222470338:AAE5mR86BFGu1V9NwJok-N1yquxbmqtHVNI"
 ADMIN_ID = 8586849798
-APP_URL = os.environ.get("APP_URL", "https://your-app.onrender.com")
+APP_URL = os.environ.get("https://claim100rsfree-2.onrender.com", "https://your-app.onrender.com")
 PORT = int(os.environ.get("PORT", 5000))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
