@@ -11,7 +11,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ======== CONFIG ========
-BOT_TOKEN = "8222470338:AAE5mR86BFGu1V9NwJok-N1yquxbmqtHVNI"
+BOT_TOKEN = "8642873819:AAGutq-CkjSS5HKZCa7hpZudyjQ0VukPBpo"
 ADMIN_ID = 8986441675
 APP_URL = os.environ.get("APP_URL", "https://your-app.onrender.com")
 PORT = int(os.environ.get("PORT", 5000))
