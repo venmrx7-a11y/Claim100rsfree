@@ -14,7 +14,7 @@ import uuid
 
 # ======== CONFIG ========
 BOT_TOKEN = "8222470338:AAE5mR86BFGu1V9NwJok-N1yquxbmqtHVNI"
-ADMIN_ID = 8986441675
+ADMIN_ID = 8641876252
 PORT = int(os.environ.get("PORT", 5000))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
